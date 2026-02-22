@@ -14,6 +14,7 @@ INCLUDE_DIRS = -Isources/kernel_arguments \
 			   -Isources/io_apic \
 			   -Isources/acpi2_parser \
 			   -Isources/pic \
+			   -Isources/uart \
 			   -Isources/local_apic \
 			   -Isources/system_calls \
 			   -Isources/keyboard_controller \
@@ -50,6 +51,7 @@ SOURCES = sources/kernel.c \
 		  sources/system_mass_storage/system_mass_storage.c \
 		  sources/local_apic/local_apic.c \
 		  sources/io_apic/io_apic.c \
+		  sources/uart/uart.c \
 		  sources/acpi2_parser/acpi2_parser.c \
 		  sources/acpi2_parser/xsdt_parser/xsdt_parser.c \
 		  sources/acpi2_parser/sdth_parser/sdth_parser.c \

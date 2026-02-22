@@ -6,9 +6,9 @@
 
 STATUS API SystemPhysicalMemoryInit(IN SYSTEM_MEMORY *SystemMemory);
 
-STATUS API SystemPhysicalMemoryAllocatePages(OUT VOID **Buffer, IN CONST UINT64 NumberOfPages);
+STATUS API SystemPhysicalMemoryAllocatePages(OUT UINT64 *PhysicalAddress, IN CONST UINT64 PageCount);
 
-STATUS API SystemPhysicalMemoryFreePages(IN OUT VOID **Buffer, IN CONST UINT64 NumberOfPages);
+STATUS API SystemPhysicalMemoryFreePages(IN OUT UINT64 *PhysicalAddress);
 
 STATUS API SystemPhysicalMemoryAllocatePool(OUT VOID **Buffer, IN CONST UINT64 Size);
 

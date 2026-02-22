@@ -464,7 +464,7 @@ STATUS API Fat32PartitionManagerReadDirectoryContent(
 
     DIRECTORY_ENTRY *DirectoryEntries = NULL_PTR;
     DIRECTORY_ENTRY *OppenedDirectory = &DirectoryEntries[Fat32PartitionManagerHandle->ClusterOffset / sizeof(*DirectoryEntries)];
-    SystemPhysicalMemoryAllocatePages((VOID **)&DirectoryEntries, SECTORS_PER_CLUSTER * BYTES_PER_SECTOR);
+    SystemPhysicalMemoryAllocatePool((VOID **)&DirectoryEntries, SECTORS_PER_CLUSTER * BYTES_PER_SECTOR * 4096);
     SystemMassStorageReadSectors(Internal->DevicePath, Internal->FirstDataSector + (Fat32PartitionManagerHandle->CurrentCluster - 2) * SECTORS_PER_CLUSTER, SECTORS_PER_CLUSTER, DirectoryEntries);
 
     if (0 != OppenedDirectory->Name[0])
@@ -704,7 +704,7 @@ STATUS API Fat32PartitionManagerWriteFile(
         goto Cleanup;
     }
 
-    SystemPhysicalMemoryAllocatePages((VOID **)&ClusterBuffer, SECTORS_PER_CLUSTER * BYTES_PER_SECTOR);
+    SystemPhysicalMemoryAllocatePool((VOID **)&ClusterBuffer, SECTORS_PER_CLUSTER * BYTES_PER_SECTOR) *4096;
     if (NULL_PTR == ClusterBuffer)
     {
         Status = E_NOT_OK;
@@ -847,7 +847,7 @@ static STATUS API CreateDefaultDirectoryEntry(IN FAT32_PARTITION_MANAGER_INTERNA
                                               UINT32 ParrentDirectoryCluster)
 {
     DIRECTORY_ENTRY *DirectoryEntries = NULL_PTR;
-    SystemPhysicalMemoryAllocatePages((VOID **)&DirectoryEntries, SECTORS_PER_CLUSTER * BYTES_PER_SECTOR);
+    SystemPhysicalMemoryAllocatePool((VOID **)&DirectoryEntries, SECTORS_PER_CLUSTER * BYTES_PER_SECTOR * 4096);
     SystemMassStorageReadSectors(Internal->DevicePath, Internal->FirstDataSector + (CurrentCluster - 2) * SECTORS_PER_CLUSTER, SECTORS_PER_CLUSTER, DirectoryEntries);
 
     if (2 == ParrentDirectoryCluster)
@@ -872,7 +872,7 @@ static STATUS API FindEntryCluster(IN FAT32_PARTITION_MANAGER_INTERNAL *Internal
                                    OUT OPTIONAL UINT64 *EntrySize)
 {
     DIRECTORY_ENTRY *DirectoryEntries = NULL_PTR;
-    SystemPhysicalMemoryAllocatePages((VOID **)&DirectoryEntries, SECTORS_PER_CLUSTER * BYTES_PER_SECTOR);
+    SystemPhysicalMemoryAllocatePool((VOID **)&DirectoryEntries, SECTORS_PER_CLUSTER * BYTES_PER_SECTOR * 4096);
     SystemMassStorageReadSectors(Internal->DevicePath, Internal->FirstDataSector + (CurrentCluster - 2) * SECTORS_PER_CLUSTER, SECTORS_PER_CLUSTER, DirectoryEntries);
 
     for (UINT64 i = 0; i < NUMBER_OF_ENTRIES_IN_A_CLUSTERS; ++i)

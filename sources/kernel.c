@@ -21,6 +21,7 @@
 #include "pcie_controller.h"
 #include "ahci_controller.h"
 #include "system_mass_storage.h"
+#include "uart.h"
 
 #define MODULE_TAG u"KERNEL"
 
@@ -30,8 +31,19 @@ static SYSTEM_CONFIGURATION_TABLE SystemConfigurationTable;
 static UINT64 NumberOfPCIeDevices;
 static PCIe_HEADER *PCIeDevices[32];
 
+
+static UINT64 API IdentityMap(UINT64 PhysicalAddress)
+{
+    return PhysicalAddress;
+}
+
+KERNEL_BOOT_INFORMATION KernelBootInformation;
+
 STATUS API KernelEntry(KERNEL_ARGUMENTS *KernelArguments)
 {
+    UartInit();
+    UartWriteString("\nWelcome To Bonta Operating Systems\n");
+    KernelBootInformation.PhysicalToVirtualMap = IdentityMap;
     SystemPhysicalMemoryInit(KernelArguments->SystemMemory);
     SystemVideoInit(KernelArguments->VideoAdapter);
     SystemFontsInit(KernelArguments->CharatersBitmap);
@@ -111,12 +123,15 @@ STATUS API KernelEntry(KERNEL_ARGUMENTS *KernelArguments)
 
     ASM("sti");
 
-    UINT8 Unused;
-    PortReadByte(0x64, &Unused);
-    while (Unused & 1)
+    for (UINT8 Index = 0; Index < 255 ; Index++)
     {
-        PortReadByte(0x60, &Unused);
+            UINT8 Unused;
         PortReadByte(0x64, &Unused);
+        while (Unused & 1)
+        {
+            PortReadByte(0x60, &Unused);
+            PortReadByte(0x64, &Unused);
+        }
     }
 
     while (1)
@@ -129,11 +144,11 @@ STATUS API KernelEntry(KERNEL_ARGUMENTS *KernelArguments)
 
         if (0 != KeyCharCode[0])
         {
-            LOG_INFO(u"Mue: %s", KeyCharCode);
+            LOG_INFO(u"Pressed: %s", KeyCharCode);
         }
     }
 
-    LOG_INFO(u"%s", u"MUE2");
+    LOG_INFO(u"%s", u"Pressed");
 
     while (1)
         ;

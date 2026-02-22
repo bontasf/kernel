@@ -61,7 +61,7 @@ STATUS API SystemVideoInit(IN CONST VIDEO_ADAPTER *VideoAdapter)
 
     NumberOfApplications = 0;
     Applications = NULL_PTR;
-    SystemPhysicalMemoryAllocatePages((VOID **)&Applications, 10 * sizeof(*Applications));
+    SystemPhysicalMemoryAllocatePool((VOID **)&Applications, 10 * sizeof(*Applications) * 4096);
     IsInitialized = TRUE;
 
 Cleanup:
