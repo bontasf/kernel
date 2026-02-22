@@ -1,7 +1,7 @@
 #include "uart.h"
 #include "port.h"
 
-#define COM1 0x2F8
+#define COM1 0x3F8
 
 void UartInit(void)
 {
