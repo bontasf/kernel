@@ -135,7 +135,7 @@ static STATUS API ParseLocalApicAddressOverride(IN CONST UINT64 LocalApicAddress
 
 STATUS API MadtFillSystemConfigurationTable(CONST UINT64 MultipleApicDescriptorTable, OUT SYSTEM_CONFIGURATION_TABLE *SystemConfiguration)
 {
-    MULTIPLE_APIC_DESCRIPTION_TABLE *Madt = (MULTIPLE_APIC_DESCRIPTION_TABLE *)MultipleApicDescriptorTable;
+    MULTIPLE_APIC_DESCRIPTION_TABLE *Madt = (MULTIPLE_APIC_DESCRIPTION_TABLE *)PhysicalToVirtual(MultipleApicDescriptorTable);
 
     SdthFillSystemConfigurationTable((UINT64)&Madt->Header, SystemConfiguration);
     LOG_DEBUG(u"Local Interrupt Controller Address: 0x%x", Madt->LocalInterruptControllerAddress);
@@ -144,7 +144,7 @@ STATUS API MadtFillSystemConfigurationTable(CONST UINT64 MultipleApicDescriptorT
     SystemConfiguration->LocalApicBaseAddress = Madt->LocalInterruptControllerAddress;
 
     UINT64 Size = sizeof(*Madt);
-    UINT64 CurrentAddress = MultipleApicDescriptorTable + Size;
+    UINT64 CurrentAddress = PhysicalToVirtual(MultipleApicDescriptorTable) + Size;
 
     while (Size < Madt->Header.Length)
     {

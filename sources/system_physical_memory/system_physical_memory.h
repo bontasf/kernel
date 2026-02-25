@@ -10,6 +10,10 @@ STATUS API SystemPhysicalMemoryAllocatePages(OUT UINT64 *PhysicalAddress, IN CON
 
 STATUS API SystemPhysicalMemoryFreePages(IN OUT UINT64 *PhysicalAddress);
 
+STATUS API SystemPhysicalMemoryIncreaseReferenceCount(UINT64 PhysicalAddress);
+
+STATUS API SystemPhysicalMemoryDecreaseReferenceCount(UINT64 PhysicalAddress);
+
 STATUS API SystemPhysicalMemoryAllocatePool(OUT VOID **Buffer, IN CONST UINT64 Size);
 
 STATUS API SystemPhysicalMemoryFreePool(IN OUT VOID **Buffer, IN CONST UINT64 Size);

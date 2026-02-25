@@ -25,7 +25,7 @@ STATUS API McfgFillSystemConfigurationTable(IN CONST UINT64 MemoryMappedConfigur
                                             OUT SYSTEM_CONFIGURATION_TABLE *SystemConfigurationTable)
 {
 
-    MEMORY_MAPPED_CONFIGURATION *Mcfg = (MEMORY_MAPPED_CONFIGURATION *)MemoryMappedConfiguration;
+    MEMORY_MAPPED_CONFIGURATION *Mcfg = (MEMORY_MAPPED_CONFIGURATION *)PhysicalToVirtual(MemoryMappedConfiguration);
 
     SdthFillSystemConfigurationTable((UINT64)&Mcfg->Header, SystemConfigurationTable);
 

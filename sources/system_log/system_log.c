@@ -14,7 +14,10 @@
 #define WARNING_TEXT_COLOR 0x0000FFFF
 #define ERROR_TEXT_COLOR 0x00FF0000
 
-static CONSOLE_CONTROLLER *ConsoleController;
+#define MAXIMUM_LOG_CONSUMERS 0x10U
+
+static LOG_CONSUMER LogConsumers[MAXIMUM_LOG_CONSUMERS];
+static UINT8 NumberOfConsumers = 0;
 
 static CHAR16 *AddInt(IN OUT CHAR16 *Output, IN INT64 Value);
 static CHAR16 *AddUint(IN OUT CHAR16 *Output, IN UINT64 Value);
@@ -25,10 +28,11 @@ static VOID BuildFormatOutputString(OUT CHAR16 *Output, IN CONST CHAR16 *Format,
 
 VOID LogInit(VOID)
 {
-    ConsoleController = NULL_PTR;
-    ConsoleControllerInit(0, 0, 1440, 900, &ConsoleController);
-    ConsoleController->SetBackgroundColor(ConsoleController, 0x00000000);
-    ConsoleController->Flush(ConsoleController);
+    NumberOfConsumers = 0;
+    for (UINT64 Index = 0; Index < MAXIMUM_LOG_CONSUMERS; Index ++)
+    {
+        LogConsumers[Index] = NULL_PTR;
+    }
 }
 
 VOID LogDebug(IN CONST CHAR16 *ModuleTag, IN CONST CHAR16 *Format, ...)
@@ -40,9 +44,10 @@ VOID LogDebug(IN CONST CHAR16 *ModuleTag, IN CONST CHAR16 *Format, ...)
     BuildFormatOutputString(FormatOutput, Format, ArgumentList);
     BuildOutputString(Output, u"%s: %s\n", ModuleTag, FormatOutput);
 
-    ConsoleController->SetTextColor(ConsoleController, DEBUGG_TEXT_COLOR);
-    ConsoleController->PrintText(ConsoleController, Output);
-    ConsoleController->SetTextColor(ConsoleController, DEFAULT_TEXT_COLOR);
+    for (UINT64 Index = 0; Index < NumberOfConsumers; Index ++)
+    {
+        LogConsumers[Index](Output, DEBUGG_TEXT_COLOR);
+    }
 }
 VOID LogInfo(IN CONST CHAR16 *ModuleTag, IN CONST CHAR16 *Format, ...)
 {
@@ -53,9 +58,10 @@ VOID LogInfo(IN CONST CHAR16 *ModuleTag, IN CONST CHAR16 *Format, ...)
     BuildFormatOutputString(FormatOutput, Format, ArgumentList);
     BuildOutputString(Output, u"%s: %s\n", ModuleTag, FormatOutput);
 
-    ConsoleController->SetTextColor(ConsoleController, INFO_TEXT_COLOR);
-    ConsoleController->PrintText(ConsoleController, Output);
-    ConsoleController->SetTextColor(ConsoleController, DEFAULT_TEXT_COLOR);
+    for (UINT64 Index = 0; Index < NumberOfConsumers; Index ++)
+    {
+        LogConsumers[Index](Output, DEBUGG_TEXT_COLOR);
+    }
 }
 VOID LogWarning(IN CONST CHAR16 *ModuleTag, IN CONST CHAR16 *Format, ...)
 {
@@ -66,9 +72,10 @@ VOID LogWarning(IN CONST CHAR16 *ModuleTag, IN CONST CHAR16 *Format, ...)
     BuildFormatOutputString(FormatOutput, Format, ArgumentList);
     BuildOutputString(Output, u"%s: %s\n", ModuleTag, FormatOutput);
 
-    ConsoleController->SetTextColor(ConsoleController, WARNING_TEXT_COLOR);
-    ConsoleController->PrintText(ConsoleController, Output);
-    ConsoleController->SetTextColor(ConsoleController, DEFAULT_TEXT_COLOR);
+    for (UINT64 Index = 0; Index < NumberOfConsumers; Index ++)
+    {
+        LogConsumers[Index](Output, DEBUGG_TEXT_COLOR);
+    }
 }
 VOID LogError(IN CONST CHAR16 *ModuleTag, IN CONST CHAR16 *Format, ...)
 {
@@ -79,9 +86,16 @@ VOID LogError(IN CONST CHAR16 *ModuleTag, IN CONST CHAR16 *Format, ...)
     BuildFormatOutputString(FormatOutput, Format, ArgumentList);
     BuildOutputString(Output, u"%s: %s\n", ModuleTag, FormatOutput);
 
-    ConsoleController->SetTextColor(ConsoleController, ERROR_TEXT_COLOR);
-    ConsoleController->PrintText(ConsoleController, Output);
-    ConsoleController->SetTextColor(ConsoleController, DEFAULT_TEXT_COLOR);
+    for (UINT64 Index = 0; Index < NumberOfConsumers; Index ++)
+    {
+        LogConsumers[Index](Output, DEBUGG_TEXT_COLOR);
+    }
+}
+
+VOID LogRegisterConsumer(CONST LOG_CONSUMER LogConsumer)
+{
+    LogConsumers[NumberOfConsumers] = LogConsumer;
+    NumberOfConsumers ++;
 }
 
 static CHAR16 *AddInt(IN OUT CHAR16 *Output, IN INT64 Value)

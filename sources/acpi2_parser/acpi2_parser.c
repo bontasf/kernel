@@ -19,12 +19,14 @@ typedef struct _ROOT_SYSTEM_DESCRIPTION_POINTER
     UINT8 Reserved[3];
 } PACKED ROOT_SYSTEM_DESCRIPTION_POINTER;
 
+extern KERNEL_BOOT_INFORMATION KernelBootInformation;
+
 static STATUS API ParseRootSystemDescriptor(IN CONST ROOT_SYSTEM_DESCRIPTION_POINTER *RootSystemDescriptonPointer,
                                             OUT SYSTEM_CONFIGURATION_TABLE *SystemConfiguration);
 
 STATUS API Acpi2FillSystemConfigurationTable(IN CONST UINT64 RootSystemDescriptorPointer, OUT SYSTEM_CONFIGURATION_TABLE *SystemConfigurationTable)
 {
-    ROOT_SYSTEM_DESCRIPTION_POINTER *Rsdp = (ROOT_SYSTEM_DESCRIPTION_POINTER *)RootSystemDescriptorPointer;
+    ROOT_SYSTEM_DESCRIPTION_POINTER *Rsdp = (ROOT_SYSTEM_DESCRIPTION_POINTER *)PhysicalToVirtual(RootSystemDescriptorPointer);
     ParseRootSystemDescriptor(Rsdp, SystemConfigurationTable);
     return E_OK;
 }

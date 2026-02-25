@@ -21,13 +21,13 @@ STATUS API XsdtFillSystemConfigurationTable(CONST UINT64 ExtendedSystemDescripti
 {
     CHAR16 Signature[5];
     SYSTEM_DESCRIPTION_TABLE_HEADER *Sdth = NULL_PTR;
-    EXTENDED_SYSTEM_DESCRIPTION_TABLE *Xsdt = (EXTENDED_SYSTEM_DESCRIPTION_TABLE *)ExtendedSystemDescriptionTable;
+    EXTENDED_SYSTEM_DESCRIPTION_TABLE *Xsdt = (EXTENDED_SYSTEM_DESCRIPTION_TABLE *)PhysicalToVirtual(ExtendedSystemDescriptionTable);
     SdthFillSystemConfigurationTable((UINT64)&Xsdt->Header, SystemConfiguration);
 
     UINT64 EntryIndex = 0;
     for (UINT64 i = sizeof(*Xsdt); i < Xsdt->Header.Length; i += sizeof(*Xsdt->Entries))
     {
-        Sdth = (SYSTEM_DESCRIPTION_TABLE_HEADER *)Xsdt->Entries[EntryIndex];
+        Sdth = (SYSTEM_DESCRIPTION_TABLE_HEADER *)PhysicalToVirtual(Xsdt->Entries[EntryIndex]);
         Char8ToChar16(Sdth->Signature, Signature, 4);
 
         if (0 == MemoryCompare(Sdth->Signature, MADT_SIGNATURE, 4))

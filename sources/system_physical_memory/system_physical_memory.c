@@ -1,6 +1,9 @@
 #include "system_physical_memory.h"
 
 #include "utils.h"
+#include "system_log.h"
+
+#define MODULE_TAG u"SYSTEM_PHYSICAL_MEMORY"
 
 #define PAGE_SIZE 4096
 
@@ -28,6 +31,8 @@ static PAGE_FRAME_METADATA *OrderFreeList[HIGHEST_ORDER] = { NULL_PTR };
 
 extern KERNEL_BOOT_INFORMATION KernelBootInformation;
 
+static BOOLEAN IsIdentityMapDisabled = FALSE;
+
 static VOID API InsertOrder(UINT64 PageIndex, UINT8 Order);
 static VOID API ProcessFreeRun(UINT64 FirstFreePage, UINT64 PageCount);
 static VOID API RemoveFreeBlock(UINT64 PageIndex, UINT8 Order);
@@ -38,6 +43,9 @@ STATUS API SystemPhysicalMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
     STATUS Status = E_OK;
     UINT64 PageFrameMetadataNumberOfPages = 0;
     UINT64 PageFrameMetadataPhysicalAddress = 0;
+
+    TotalNumberOfPages = 0;
+    IsIdentityMapDisabled = FALSE;
 
     if (NULL_PTR == SystemMemory)
     {
@@ -78,7 +86,7 @@ STATUS API SystemPhysicalMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
         goto Cleanup;
     }
 
-    PageFrameMetadata = (PAGE_FRAME_METADATA *)KernelBootInformation.PhysicalToVirtualMap(PageFrameMetadataPhysicalAddress);
+    PageFrameMetadata = (PAGE_FRAME_METADATA *)PageFrameMetadataPhysicalAddress;
     MemorySet(PageFrameMetadata, 0, PageFrameMetadataNumberOfPages * PAGE_SIZE);
     for (UINT64 PageIndex = 0 ; PageIndex < TotalNumberOfPages ; PageIndex ++)
     {
@@ -264,7 +272,7 @@ STATUS API SystemPhysicalMemoryFreePages(IN OUT UINT64 *PhysicalAddress)
     if (0 == PageFrameMetadata[PageIndex].ReferenceCount)
     {
         PageFrameMetadata[PageIndex].Flags &= (~PAGE_FRAME_METADATA_USED_FLAG);
-        MemorySet((VOID *)KernelBootInformation.PhysicalToVirtualMap(PageIndex * PAGE_SIZE), 
+        MemorySet((VOID *)PhysicalToVirtual(PageIndex * PAGE_SIZE), 
                     0U, 
                     (1ULL << PageFrameMetadata[PageIndex].Order) * PAGE_SIZE);
         MergeFreeBlock(PageIndex);
@@ -316,6 +324,57 @@ Cleanup:
     return Status;
 }
 
+STATUS API SystemPhysicalMemoryDecreaseReferenceCount(UINT64 PhysicalAddress)
+{
+    STATUS Status = E_OK;
+    UINT64 PageIndex = PhysicalAddress / PAGE_SIZE;
+
+    if (0 == PhysicalAddress)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 != (PhysicalAddress % PAGE_SIZE))
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (PageIndex >= TotalNumberOfPages)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 == (PageFrameMetadata[PageIndex].Flags & PAGE_FRAME_METADATA_USED_FLAG))
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 != PhysicalAddress % ((1ULL << PageFrameMetadata[PageIndex].Order) * PAGE_SIZE))
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 == PageFrameMetadata[PageIndex].ReferenceCount)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    PageFrameMetadata[PageIndex].ReferenceCount--;
+    if (0 == PageFrameMetadata[PageIndex].ReferenceCount)
+    {
+        SystemPhysicalMemoryFreePages(&PhysicalAddress);
+    }
+
+Cleanup:
+    return Status;
+}
+
 STATUS API SystemPhysicalMemoryAllocatePool(OUT VOID **Buffer, IN CONST UINT64 Size)
 {
     STATUS Status = E_OK;
@@ -338,6 +397,40 @@ STATUS API SystemPhysicalMemoryFreePool(IN OUT VOID **Buffer, IN CONST UINT64 Si
 {
     (void) Size;
     return SystemPhysicalMemoryFreePages((UINT64 *)Buffer);
+}
+
+STATUS API SystemPhysicalMemoryInternalVirtualSwitch(UINT64 VirtualBase)
+{
+    STATUS Status = E_OK;
+
+    if (TRUE == IsIdentityMapDisabled)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    for (UINT8 OrderIndex = 0; OrderIndex < HIGHEST_ORDER; OrderIndex ++)
+    {
+        if (NULL_PTR != OrderFreeList[OrderIndex])
+        {
+            OrderFreeList[OrderIndex] = (PAGE_FRAME_METADATA *)(((UINT64)OrderFreeList[OrderIndex]) + VirtualBase);
+        }
+    }
+
+    for (UINT64 PageIndex = 0; PageIndex < TotalNumberOfPages; PageIndex ++)
+    {
+        if (NULL_PTR != PageFrameMetadata[PageIndex].Next)
+        {
+            PageFrameMetadata[PageIndex].Next = (PAGE_FRAME_METADATA *)(((UINT64)PageFrameMetadata[PageIndex].Next) + VirtualBase);
+        }
+    }
+
+    PageFrameMetadata = (PAGE_FRAME_METADATA *)(((UINT64)PageFrameMetadata) + VirtualBase);
+    IsIdentityMapDisabled = TRUE;
+    LOG_DEBUG(u"Ready for hhdm");
+
+Cleanup:
+    return Status;
 }
 
 static VOID API InsertOrder(UINT64 PageIndex, UINT8 Order)

@@ -1,7 +1,7 @@
 #include "uart.h"
 #include "port.h"
 
-#define COM1 0x3F8
+#define COM1 0x2E8
 
 void UartInit(void)
 {
@@ -43,17 +43,17 @@ static void UartWriteChar(CHAR8 Character)
     PortWriteByte(COM1, Character);
 }
 
-void UartWriteString(CHAR8 *InputString)
+void API NO_CALLER_SAVED_REGISTERS UartWriteString(CONST CHAR16 *InputString)
 {
     while (*InputString)
     {
         if (*InputString == '\n')
             UartWriteChar('\r');
-        UartWriteChar(*InputString++);
+        UartWriteChar((CHAR8)*InputString++);
     }
 }
 
-void UartWriteHex(UINT64 Value)
+void API NO_CALLER_SAVED_REGISTERS UartWriteHex(UINT64 Value)
 {
     CONST CHAR8* HexMap = "0123456789ABCDEF";
     for (int i = 60; i >= 0; i -= 4)

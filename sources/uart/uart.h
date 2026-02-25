@@ -5,8 +5,8 @@
 
 void UartInit(void);
 
-void UartWriteString(CHAR8 *InputString);
+void API NO_CALLER_SAVED_REGISTERS UartWriteString(CONST CHAR16 *InputString);
 
-void UartWriteHex(UINT64 Value);
+void API NO_CALLER_SAVED_REGISTERS UartWriteHex(UINT64 Value);
 
 #endif /* _UART_H_ */
