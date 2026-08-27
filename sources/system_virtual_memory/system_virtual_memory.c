@@ -7,12 +7,10 @@
 
 #define MODULE_TAG u"SYSTEM_VIRTUAL_MEMORY"
 
-#define PAGE_SIZE 4096
-
-#define HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS     0xFFFF800000000000ULL
-#define HIGHER_HALF_KERNEL_IMAGE                        0xFFFFFFFF80000000ULL
-#define HIGHER_HALF_KERNEL_STACK                        0xFFFFFFFFFFFFF000ULL
-#define HIGHER_HALF_KERNEL_STACK_SIZE                   16 * 1024 * 1024
+#define HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS     (0xFFFF800000000000ULL)
+#define HIGHER_HALF_KERNEL_IMAGE                        (0xFFFFFFFF80000000ULL)
+#define HIGHER_HALF_KERNEL_STACK                        (0xFFFFFFFFFFFFF000ULL)
+#define HIGHER_HALF_KERNEL_STACK_SIZE                   (16 * 1024)
 #define HIGHER_HALF_KERNEL_STACK_BASE                   (HIGHER_HALF_KERNEL_STACK - HIGHER_HALF_KERNEL_STACK_SIZE)
 
 #define PAGE_ATTRIBUTE_DECODING_TABLE_MSR 0x277
@@ -23,6 +21,8 @@
 #define GLOBAL_ENABLE_MASK      (1ULL << 8ULL)
 #define EXECUTE_DISABLE_MASK    (1ULL << 63ULL)
 
+#define SLOT_PER_SLAB (126ULL)
+
 typedef struct _VIRTUAL_MEMORY_SPACE
 {
     UINT64 PageMapLevel4PhysicalAddress;
@@ -30,6 +30,21 @@ typedef struct _VIRTUAL_MEMORY_SPACE
     UINT64 Flags;
     UINT32 ReferenceCount;
 } VIRTUAL_MEMORY_SPACE;
+
+typedef struct _VIRTUAL_MEMORY_SPACE_SLAB VIRTUAL_MEMORY_SPACE_SLAB;
+
+typedef struct _VIRTUAL_MEMORY_SPACE_SLAB
+{
+    VIRTUAL_MEMORY_SPACE_SLAB *Next;
+    VIRTUAL_MEMORY_SPACE_SLAB *Previous;
+    UINT16                     FreeCount;
+    UINT8                      Reserved0[6];
+    UINT64                     FreeBitmap[2];
+    UINT8                      Reserved1[24];
+    VIRTUAL_MEMORY_SPACE       Slots[SLOT_PER_SLAB];
+} VIRTUAL_MEMORY_SPACE_SLAB;
+
+COMPILE_ASSERT(sizeof(VIRTUAL_MEMORY_SPACE_SLAB) == 4096, VIRTUAL_MEMORY_SLAB_SIZE_IS_4096);
 
 typedef enum PAGE_LEVEL
 {
@@ -46,9 +61,7 @@ typedef struct _WALK_RESULT
     PAGE_LEVEL PageLevel;
 } WALK_RESULT;
 
-typedef UINT64 (API *GET_VIRTUAL_ADDRESS)(UINT64 PhysicalAddress);
-
-VIRTUAL_MEMORY_SPACE KernelMemorySpace = 
+VIRTUAL_MEMORY_SPACE KernelMemorySpace =
 {
     .PageMapLevel4PhysicalAddress = 0,
     .PageMapLevel4VirtualAddress = 0,
@@ -70,6 +83,10 @@ static VOID API SetPageAttributeTable(VOID);
 
 static VOID API JumpToHigherHalf(UINT64 PageMapLevel4PhysicalAddress, UINT64 KernelStackTop);
 
+static STATUS API InitVirtualMemorySpace(IN OUT VIRTUAL_MEMORY_SPACE *VirtualMemorySpace);
+
+static VOID API InitVirtualMemorySpaceSlab(IN OUT VIRTUAL_MEMORY_SPACE_SLAB* Slab);
+
 static BOOLEAN API IsUserspaceAddress(CONST UINT64 VirtualAddress);
 
 extern STATUS API HigherHafKernelEntry(VOID);
@@ -79,11 +96,13 @@ UINT64 KernelBaseAddress = 0;
 extern UINT64 KernelDirectMappingVirtualOffset;
 extern STATUS API SystemPhysicalMemoryInternalVirtualSwitch(UINT64 VirtualBase);
 
+static VIRTUAL_MEMORY_SPACE_SLAB *VirtualMemorySpaceSlab;
+
 STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
 {
     STATUS Status = E_OK;
     UINT64 KernelStackBasePhysicalAddress = 0;
-    UINT64 NumberOfPages = HIGHER_HALF_KERNEL_STACK_SIZE / PAGE_SIZE;
+    UINT64 NumberOfPages = HIGHER_HALF_KERNEL_STACK_SIZE / PHYSICAL_MEMORY_PAGE_SIZE;
 
     if (NULL_PTR == SystemMemory)
     {
@@ -97,6 +116,7 @@ STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
     KernelMemorySpace.PageMapLevel4VirtualAddress = 0;
     KernelMemorySpace.ReferenceCount = 1;
     KernelMemorySpace.Flags = 0;
+    VirtualMemorySpaceSlab = NULL_PTR;
 
     Status = SystemPhysicalMemoryAllocatePages(&KernelMemorySpace.PageMapLevel4PhysicalAddress, 1);
     if (E_OK != Status)
@@ -104,7 +124,7 @@ STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
         Status = E_NOT_OK;
         goto Cleanup;
     }
-    MemorySet((VOID *)PhysicalToVirtual(KernelMemorySpace.PageMapLevel4PhysicalAddress), 0U, PAGE_SIZE);
+    MemorySet((VOID *)PhysicalToVirtual(KernelMemorySpace.PageMapLevel4PhysicalAddress), 0U, PHYSICAL_MEMORY_PAGE_SIZE);
 
     Status = SystemPhysicalMemoryAllocatePages(&KernelStackBasePhysicalAddress, NumberOfPages);
     if (E_OK != Status)
@@ -112,7 +132,7 @@ STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
         Status = E_NOT_OK;
         goto Cleanup;
     }
-    MemorySet((VOID *)PhysicalToVirtual(KernelStackBasePhysicalAddress), 0U, PAGE_SIZE * NumberOfPages);
+    MemorySet((VOID *)PhysicalToVirtual(KernelStackBasePhysicalAddress), 0U, PHYSICAL_MEMORY_PAGE_SIZE * NumberOfPages);
 
     KernelMemorySpace.PageMapLevel4VirtualAddress = PhysicalToVirtual(KernelMemorySpace.PageMapLevel4PhysicalAddress);
     Status = SystemVirtualMemoryMapPages
@@ -121,7 +141,7 @@ STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
         HIGHER_HALF_KERNEL_STACK_BASE,
         KernelStackBasePhysicalAddress,
         NumberOfPages,
-        SYSTEM_VIRTUAL_MEMORY_FLAG_READ_WRITE | SYSTEM_VIRTUAL_MEMORY_FLAG_GLOBAL_ENABLED, 
+        SYSTEM_VIRTUAL_MEMORY_FLAG_READ_WRITE | SYSTEM_VIRTUAL_MEMORY_FLAG_GLOBAL_ENABLED,
         MemoryCacheWriteBack
     );
     if (E_OK != Status)
@@ -140,11 +160,11 @@ STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
             MEMORY_REGION_DESCRIPTOR *Descriptor = &SystemMemory->MemoryDescriptors[DescriptorIndex];
             Status = SystemVirtualMemoryMapPages
             (
-                &KernelMemorySpace, 
-                HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS + Descriptor->PhysicalStart, 
-                Descriptor->PhysicalStart, 
-                Descriptor->PageCount, 
-                SYSTEM_VIRTUAL_MEMORY_FLAG_READ_WRITE | SYSTEM_VIRTUAL_MEMORY_FLAG_GLOBAL_ENABLED, 
+                &KernelMemorySpace,
+                HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS + Descriptor->PhysicalStart,
+                Descriptor->PhysicalStart,
+                Descriptor->PageCount,
+                SYSTEM_VIRTUAL_MEMORY_FLAG_READ_WRITE | SYSTEM_VIRTUAL_MEMORY_FLAG_GLOBAL_ENABLED,
                 MemoryCacheWriteBack
             );
 
@@ -159,10 +179,10 @@ STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
             MEMORY_REGION_DESCRIPTOR *Descriptor = &SystemMemory->MemoryDescriptors[DescriptorIndex];
             Status = SystemVirtualMemoryMapPages
             (
-                &KernelMemorySpace, 
-                HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS + Descriptor->PhysicalStart, 
-                Descriptor->PhysicalStart, 
-                Descriptor->PageCount, 
+                &KernelMemorySpace,
+                HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS + Descriptor->PhysicalStart,
+                Descriptor->PhysicalStart,
+                Descriptor->PageCount,
                 SYSTEM_VIRTUAL_MEMORY_FLAG_READ_WRITE | SYSTEM_VIRTUAL_MEMORY_FLAG_GLOBAL_ENABLED,
                 MemoryCacheWriteCombining
             );
@@ -178,10 +198,10 @@ STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
             MEMORY_REGION_DESCRIPTOR *Descriptor = &SystemMemory->MemoryDescriptors[DescriptorIndex];
             Status = SystemVirtualMemoryMapPages
             (
-                &KernelMemorySpace, 
-                HIGHER_HALF_KERNEL_IMAGE, 
-                Descriptor->PhysicalStart, 
-                Descriptor->PageCount, 
+                &KernelMemorySpace,
+                HIGHER_HALF_KERNEL_IMAGE,
+                Descriptor->PhysicalStart,
+                Descriptor->PageCount,
                 SYSTEM_VIRTUAL_MEMORY_FLAG_READ_WRITE | SYSTEM_VIRTUAL_MEMORY_FLAG_GLOBAL_ENABLED | SYSTEM_VIRTUAL_MEMORY_FLAG_EXEC,
                 MemoryCacheWriteBack
             );
@@ -227,7 +247,124 @@ STATUS API SystemVirtualMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
     return Status;
 }
 
+STATUS API SystemVirtualMemoryCreateSpace(OUT VIRTUAL_MEMORY_SPACE **VirtualMemorySpace)
+{
+    STATUS Status = E_OK;
+    UINT64 PhysicalAddress = 0;
+    VIRTUAL_MEMORY_SPACE_SLAB *Slab = NULL_PTR;
+    VIRTUAL_MEMORY_SPACE_SLAB *AllocateSlab = NULL_PTR;
+    UINT16 SlotIndex = 0;
+    UINT8 BitmapSelector = 0;
+    UINT8 BitmapBit = 0;
+
+    if (NULL_PTR == VirtualMemorySpace)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (NULL_PTR != *VirtualMemorySpace)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (NULL_PTR == VirtualMemorySpaceSlab)
+    {
+        Status = SystemPhysicalMemoryAllocatePages(&PhysicalAddress, 1);
+        if (E_OK != Status)
+        {
+            goto Cleanup;
+        }
+
+        AllocateSlab = (VIRTUAL_MEMORY_SPACE_SLAB *)(HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS + PhysicalAddress);
+        InitVirtualMemorySpaceSlab(AllocateSlab);
+        VirtualMemorySpaceSlab = AllocateSlab;
+    }
+
+    Slab = VirtualMemorySpaceSlab;
+    while ((0 == Slab->FreeCount) && (NULL_PTR != Slab->Next))
+    {
+        Slab = Slab->Next;
+    }
+
+    if (0 == Slab->FreeCount)
+    {
+        Status = SystemPhysicalMemoryAllocatePages(&PhysicalAddress, 1);
+        if (E_OK != Status)
+        {
+            goto Cleanup;
+        }
+
+        AllocateSlab = (VIRTUAL_MEMORY_SPACE_SLAB *)(HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS + PhysicalAddress);
+        InitVirtualMemorySpaceSlab(AllocateSlab);
+        AllocateSlab->Previous = Slab;
+        Slab->Next = AllocateSlab;
+        Slab = AllocateSlab;
+    }
+
+    if (0 == Slab->FreeCount)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 != Slab->FreeBitmap[0])
+    {
+        BitmapSelector = 0;
+        BitmapBit = CountTrailingZeros(Slab->FreeBitmap[0]);
+    }
+    else
+    {
+        BitmapSelector = 1;
+        BitmapBit = CountTrailingZeros(Slab->FreeBitmap[1]);
+    }
+
+    Slab->FreeBitmap[BitmapSelector] &= (~(1ULL << BitmapBit));
+    Slab->FreeCount--;
+    SlotIndex = BitmapSelector * 64 + BitmapBit;
+    Status = InitVirtualMemorySpace(&Slab->Slots[SlotIndex]);
+    if (E_OK != Status)
+    {
+        Slab->FreeBitmap[BitmapSelector] |= (1ULL << BitmapBit);
+        Slab->FreeCount++;
+        goto Cleanup;
+    }
+
+    *VirtualMemorySpace = &Slab->Slots[SlotIndex];
+
+Cleanup:
+    return Status;
+}
+
 STATUS API SystemVirtualMemoryDestroySpace(IN VIRTUAL_MEMORY_SPACE *VirtualMemorySpace)
+{
+    return E_NOT_OK;
+}
+
+STATUS API SystemVirtualMemorySwitchSpace(IN CONST VIRTUAL_MEMORY_SPACE *VirtualMemorySpace)
+{
+    STATUS Status = E_OK;
+
+    if (NULL_PTR == VirtualMemorySpace)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 == VirtualMemorySpace->PageMapLevel4PhysicalAddress)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    ASM("mov %0, %%cr3" :: "r"(VirtualMemorySpace->PageMapLevel4PhysicalAddress) : "memory");
+
+Cleanup:
+    return Status;
+}
+
+STATUS API SystemVirtualMemoryGetCurrentSpace(OUT VIRTUAL_MEMORY_SPACE **VirtualMemorySpace)
 {
     return E_NOT_OK;
 }
@@ -235,7 +372,7 @@ STATUS API SystemVirtualMemoryDestroySpace(IN VIRTUAL_MEMORY_SPACE *VirtualMemor
 STATUS API SystemVirtualMemoryMapPages(IN VIRTUAL_MEMORY_SPACE *VirtualMemorySpace, IN UINT64 VirtualAddress, IN UINT64 PhysicalAddress, IN UINT64 PageCount, IN UINT64 Flags, IN MEMORY_CACHE_TYPE MemoryCacheType)
 {
     STATUS Status = E_OK;
-    WALK_RESULT WalkResult = 
+    WALK_RESULT WalkResult =
     {
         .Entry = NULL_PTR,
         .PageLevel = VirtualMemoryPageLevelInvalid
@@ -251,13 +388,13 @@ STATUS API SystemVirtualMemoryMapPages(IN VIRTUAL_MEMORY_SPACE *VirtualMemorySpa
         goto Cleanup;
     }
 
-    if (0 != (VirtualAddress % PAGE_SIZE))
+    if (0 != (VirtualAddress % PHYSICAL_MEMORY_PAGE_SIZE))
     {
         Status = E_NOT_OK;
         goto Cleanup;
     }
 
-    if (0 != (PhysicalAddress % PAGE_SIZE))
+    if (0 != (PhysicalAddress % PHYSICAL_MEMORY_PAGE_SIZE))
     {
         Status = E_NOT_OK;
         goto Cleanup;
@@ -317,8 +454,8 @@ STATUS API SystemVirtualMemoryMapPages(IN VIRTUAL_MEMORY_SPACE *VirtualMemorySpa
         }
 
         *(WalkResult.Entry) = PageTableEntry;
-        CurrentPhysicalAddress += PAGE_SIZE;
-        CurrentVirtualAddress += PAGE_SIZE;
+        CurrentPhysicalAddress += PHYSICAL_MEMORY_PAGE_SIZE;
+        CurrentVirtualAddress += PHYSICAL_MEMORY_PAGE_SIZE;
     }
 
 Cleanup:
@@ -335,14 +472,203 @@ STATUS API SystemVirtualMemoryUnmapPages(IN VIRTUAL_MEMORY_SPACE* VirtualMemoryS
     return E_NOT_OK;
 }
 
-static UINT64 API IdentityMap(UINT64 PhysicalAddress)
+STATUS API SystemVirtualMemoryUpdateFlags(IN VIRTUAL_MEMORY_SPACE *VirtualMemorySpace, IN UINT64 VirtualAddress, IN UINT64 PageCount, IN UINT64 Flags, MEMORY_CACHE_TYPE MemoryCacheType)
 {
-    return PhysicalAddress;
+    return E_NOT_OK;
 }
 
-static UINT64 API HigherHalfMap(UINT64 PhysicalAddress)
+
+STATUS API SystemVirtualMemoryQuery
+(
+    IN VIRTUAL_MEMORY_SPACE *VirtualMemorySpace,
+    IN UINT64 VirtualAddress,
+    OUT OPTIONAL UINT64 *PhysicalAddress,
+    OUT OPTIONAL OPTIONAL UINT64* Flags,
+    OUT OPTIONAL MEMORY_CACHE_TYPE *MemoryCacheType
+)
 {
-    return PhysicalAddress + HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS;
+    STATUS Status = E_OK;
+    WALK_RESULT WalkResult =
+    {
+        .Entry = NULL_PTR,
+        .PageLevel = VirtualMemoryPageLevelInvalid
+    };
+
+    if (NULL_PTR == VirtualMemorySpace)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 == VirtualAddress)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    Status = WalkVirtualMemorySpace(VirtualMemorySpace, VirtualAddress, FALSE, &WalkResult);
+    if (E_OK != Status)
+    {
+        goto Cleanup;
+    }
+
+    if (VirtualMemoryPageLevelPageTable != WalkResult.PageLevel)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 == ((*WalkResult.Entry) & PRESENT_MASK))
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (NULL_PTR != PhysicalAddress)
+    {
+        *PhysicalAddress = (*WalkResult.Entry) & 0x000FFFFFFFFFF000ULL;
+    }
+
+    if (NULL_PTR != Flags)
+    {
+        *Flags = 0;
+        if (0 != ((*WalkResult.Entry) & READ_WRITE_MASK))
+        {
+            (*Flags) |= SYSTEM_VIRTUAL_MEMORY_FLAG_READ_WRITE;
+        }
+        if (0 != ((*WalkResult.Entry) & GLOBAL_ENABLE_MASK))
+        {
+            (*Flags) |= SYSTEM_VIRTUAL_MEMORY_FLAG_GLOBAL_ENABLED;
+        }
+        if (0 == ((*WalkResult.Entry) & EXECUTE_DISABLE_MASK))
+        {
+            (*Flags) |= SYSTEM_VIRTUAL_MEMORY_FLAG_EXEC;
+        }
+    }
+
+    if (NULL_PTR != MemoryCacheType)
+    {
+        *(MemoryCacheType) = (MEMORY_CACHE_TYPE)
+        (
+            ((((*WalkResult.Entry) >> 3) & 1ULL) << 0ULL) |
+            ((((*WalkResult.Entry) >> 4) & 1ULL) << 1ULL) |
+            ((((*WalkResult.Entry) >> 7) & 1ULL) << 2ULL)
+        );
+    }
+
+Cleanup:
+    if (E_OK != Status)
+    {
+        if (NULL_PTR != PhysicalAddress)
+        {
+            *PhysicalAddress = 0ULL;
+        }
+        if (NULL_PTR != Flags)
+        {
+            *Flags = 0ULL;
+        }
+    }
+    return Status;
+}
+
+STATUS API SystemVirtualMemoryIsMapped(IN VIRTUAL_MEMORY_SPACE *VirtualMemorySpace, IN UINT64 VirtualAddress, OUT BOOLEAN *IsMapped)
+{
+    STATUS Status = E_OK;
+    WALK_RESULT WalkResult =
+    {
+        .Entry = NULL_PTR,
+        .PageLevel = VirtualMemoryPageLevelInvalid
+    };
+
+    if (NULL_PTR == VirtualMemorySpace)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (NULL_PTR == IsMapped)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 == VirtualAddress)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    Status = WalkVirtualMemorySpace(VirtualMemorySpace, VirtualAddress, FALSE, &WalkResult);
+    if ((E_OK != Status) || (0 == ((*WalkResult.Entry) & PRESENT_MASK)))
+    {
+        *IsMapped = FALSE;
+    }
+    else
+    {
+        *IsMapped = TRUE;
+    }
+
+    Status = E_OK;
+
+Cleanup:
+    return Status;
+}
+
+static STATUS API InitVirtualMemorySpace(IN OUT VIRTUAL_MEMORY_SPACE *VirtualMemorySpace)
+{
+    STATUS Status = E_OK;
+    UINT64 *PageMapLevel4 = NULL_PTR;
+    UINT64 *KernelPageMapLevel4 = NULL_PTR;
+
+    if (NULL_PTR == VirtualMemorySpace)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    if (0 == KernelMemorySpace.PageMapLevel4VirtualAddress)
+    {
+        Status = E_NOT_OK;
+        goto Cleanup;
+    }
+
+    VirtualMemorySpace->PageMapLevel4PhysicalAddress = 0;
+    VirtualMemorySpace->PageMapLevel4VirtualAddress = 0;
+    VirtualMemorySpace->Flags = 0;
+    VirtualMemorySpace->ReferenceCount = 0;
+
+    Status = SystemPhysicalMemoryAllocatePages(&VirtualMemorySpace->PageMapLevel4PhysicalAddress, 1);
+    if (E_OK != Status)
+    {
+        goto Cleanup;
+    }
+
+    VirtualMemorySpace->PageMapLevel4VirtualAddress = HIGHER_HALF_DIRECT_MAP_VIRTUAL_BASE_ADDRESS + VirtualMemorySpace->PageMapLevel4PhysicalAddress;
+    PageMapLevel4 = (UINT64 *)VirtualMemorySpace->PageMapLevel4VirtualAddress;
+    KernelPageMapLevel4 = (UINT64 *)KernelMemorySpace.PageMapLevel4VirtualAddress;
+
+    for (UINT64 PageMapLevel4Index = 0; PageMapLevel4Index < 256; PageMapLevel4Index ++)
+    {
+        PageMapLevel4[PageMapLevel4Index] = 0;
+    }
+
+    /* Copy Higher Half entries into the Virtual Region */
+    for (UINT64 PageMapLevel4Index = 256; PageMapLevel4Index < 512; PageMapLevel4Index ++)
+    {
+        PageMapLevel4[PageMapLevel4Index] = KernelPageMapLevel4[PageMapLevel4Index];
+    }
+
+Cleanup:
+    return Status;
+}
+
+static VOID API InitVirtualMemorySpaceSlab(IN OUT VIRTUAL_MEMORY_SPACE_SLAB* Slab)
+{
+    Slab->Next = NULL_PTR;
+    Slab->Previous = NULL_PTR;
+    Slab->FreeBitmap[0] = 0xFFFFFFFFFFFFFFFFULL;
+    Slab->FreeBitmap[1] = 0x3FFFFFFFFFFFFFFFULL;
+    Slab->FreeCount = SLOT_PER_SLAB;
 }
 
 static BOOLEAN API IsUserspaceAddress(CONST UINT64 VirtualAddress)
@@ -399,7 +725,7 @@ static STATUS API WalkVirtualMemorySpace
                 goto Cleanup;
             }
             PageDirectoryPointerTableMarkForFreeOnFailure = TRUE;
-            MemorySet((VOID *)PhysicalToVirtual(PageDirectoryPointerTablePhysicalAddress), 0, PAGE_SIZE);
+            MemorySet((VOID *)PhysicalToVirtual(PageDirectoryPointerTablePhysicalAddress), 0, PHYSICAL_MEMORY_PAGE_SIZE);
             PageDirectoryPointerTableResult = PageDirectoryPointerTablePhysicalAddress | READ_WRITE_MASK | PRESENT_MASK;
             if (TRUE == IsUserspaceAddress(VirtualAddress))
             {
@@ -425,7 +751,7 @@ static STATUS API WalkVirtualMemorySpace
                 goto Cleanup;
             }
             PageDirectoryMarkForFreeOnFailure = TRUE;
-            MemorySet((VOID *)PhysicalToVirtual(PageDirectoryPhysicalAddress), 0, PAGE_SIZE);
+            MemorySet((VOID *)PhysicalToVirtual(PageDirectoryPhysicalAddress), 0, PHYSICAL_MEMORY_PAGE_SIZE);
             PageDirectoryResult = PageDirectoryPhysicalAddress | READ_WRITE_MASK | PRESENT_MASK;
             if (TRUE == IsUserspaceAddress(VirtualAddress))
             {
@@ -451,7 +777,7 @@ static STATUS API WalkVirtualMemorySpace
                 goto Cleanup;
             }
             PageTableMarkForFreeOnFailure = TRUE;
-            MemorySet((VOID *)PhysicalToVirtual(PageTablePhysicalAddress), 0, PAGE_SIZE);
+            MemorySet((VOID *)PhysicalToVirtual(PageTablePhysicalAddress), 0, PHYSICAL_MEMORY_PAGE_SIZE);
             PageTableResult = PageTablePhysicalAddress | READ_WRITE_MASK | PRESENT_MASK;
             if (TRUE == IsUserspaceAddress(VirtualAddress))
             {
@@ -467,7 +793,7 @@ static STATUS API WalkVirtualMemorySpace
     }
 
     PageTable = (UINT64 *)PhysicalToVirtual(PageDirectory[PageDirectoryIndex] & (~0xFFFULL));
-    
+
     WalkResult->Entry = &PageTable[PageTableIndex];
     WalkResult->PageLevel = VirtualMemoryPageLevelPageTable;
 Cleanup:
@@ -519,7 +845,7 @@ VOID NORETURN JumpToHigherHalf(UINT64 PageMapLevel4PhysicalAddress, UINT64 Kerne
 {
     UINT64 CalculatedNewEntry = 0;
     CalculatedNewEntry =  HIGHER_HALF_KERNEL_IMAGE + ((UINT64)HigherHafKernelEntry - KernelBaseAddress);
-     __asm__ volatile (
+    ASM(
         "cli\n\t"
 
         /* move inputs into known registers FIRST */

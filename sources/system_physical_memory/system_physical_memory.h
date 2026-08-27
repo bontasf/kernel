@@ -4,6 +4,8 @@
 #include "platform_types.h"
 #include "system_memory_types.h"
 
+#define PHYSICAL_MEMORY_PAGE_SIZE 4096
+
 STATUS API SystemPhysicalMemoryInit(IN SYSTEM_MEMORY *SystemMemory);
 
 STATUS API SystemPhysicalMemoryAllocatePages(OUT UINT64 *PhysicalAddress, IN CONST UINT64 PageCount);

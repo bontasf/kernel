@@ -5,7 +5,7 @@
 
 #define MODULE_TAG u"SYSTEM_PHYSICAL_MEMORY"
 
-#define PAGE_SIZE 4096
+#define PHYSICAL_MEMORY_PAGE_SIZE 4096
 
 #define HIGHEST_ORDER 20
 
@@ -61,13 +61,13 @@ STATUS API SystemPhysicalMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
     for (UINT64 MemoryDescriptorIndex = 0; MemoryDescriptorIndex < SystemMemory->NumberOfMemoryDescriptors; ++MemoryDescriptorIndex)
     {
         MEMORY_REGION_DESCRIPTOR *MemoryDescriptor = &SystemMemory->MemoryDescriptors[MemoryDescriptorIndex];
-        if (TotalNumberOfPages < ((MemoryDescriptor->PhysicalStart / PAGE_SIZE) + MemoryDescriptor->PageCount))
+        if (TotalNumberOfPages < ((MemoryDescriptor->PhysicalStart / PHYSICAL_MEMORY_PAGE_SIZE) + MemoryDescriptor->PageCount))
         {
-            TotalNumberOfPages = ((MemoryDescriptor->PhysicalStart / PAGE_SIZE) + MemoryDescriptor->PageCount);
+            TotalNumberOfPages = ((MemoryDescriptor->PhysicalStart / PHYSICAL_MEMORY_PAGE_SIZE) + MemoryDescriptor->PageCount);
         }
     }
 
-    PageFrameMetadataNumberOfPages = (TotalNumberOfPages * sizeof(PAGE_FRAME_METADATA) + PAGE_SIZE - 1) / PAGE_SIZE;
+    PageFrameMetadataNumberOfPages = (TotalNumberOfPages * sizeof(PAGE_FRAME_METADATA) + PHYSICAL_MEMORY_PAGE_SIZE - 1) / PHYSICAL_MEMORY_PAGE_SIZE;
     for (UINT64 MemoryDescriptorIndex = 0; (MemoryDescriptorIndex < SystemMemory->NumberOfMemoryDescriptors) && (0 == PageFrameMetadataPhysicalAddress); ++MemoryDescriptorIndex)
     {
         MEMORY_REGION_DESCRIPTOR *MemoryDescriptor = &SystemMemory->MemoryDescriptors[MemoryDescriptorIndex];
@@ -87,7 +87,7 @@ STATUS API SystemPhysicalMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
     }
 
     PageFrameMetadata = (PAGE_FRAME_METADATA *)PageFrameMetadataPhysicalAddress;
-    MemorySet(PageFrameMetadata, 0, PageFrameMetadataNumberOfPages * PAGE_SIZE);
+    MemorySet(PageFrameMetadata, 0, PageFrameMetadataNumberOfPages * PHYSICAL_MEMORY_PAGE_SIZE);
     for (UINT64 PageIndex = 0 ; PageIndex < TotalNumberOfPages ; PageIndex ++)
     {
         PageFrameMetadata[PageIndex].Flags |= PAGE_FRAME_METADATA_RESERVED_FLAG;
@@ -98,7 +98,7 @@ STATUS API SystemPhysicalMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
         MEMORY_REGION_DESCRIPTOR *MemoryDescriptor = &SystemMemory->MemoryDescriptors[MemoryDescriptorIndex];
         if ((MemoryDescriptor->Type == MemoryUsable) && (MemoryDescriptor->PageCount > 0))
         {
-            UINT64 FirstPageIndex = MemoryDescriptor->PhysicalStart / PAGE_SIZE;
+            UINT64 FirstPageIndex = MemoryDescriptor->PhysicalStart / PHYSICAL_MEMORY_PAGE_SIZE;
             for (UINT64 PageIndex = 0; PageIndex < MemoryDescriptor->PageCount; ++PageIndex)
             {
                 PageFrameMetadata[FirstPageIndex + PageIndex].Flags &= (~PAGE_FRAME_METADATA_RESERVED_FLAG);
@@ -107,7 +107,7 @@ STATUS API SystemPhysicalMemoryInit(IN SYSTEM_MEMORY *SystemMemory)
     }
 
     /* Mark Page Frame Information as reserved */
-    UINT64 FirstPageFrameMetadata = (PageFrameMetadataPhysicalAddress / PAGE_SIZE);
+    UINT64 FirstPageFrameMetadata = (PageFrameMetadataPhysicalAddress / PHYSICAL_MEMORY_PAGE_SIZE);
     for (UINT64 PageIndex =  0; PageIndex < PageFrameMetadataNumberOfPages ; PageIndex ++)
     {
         PageFrameMetadata[FirstPageFrameMetadata + PageIndex].Flags |= PAGE_FRAME_METADATA_RESERVED_FLAG;
@@ -215,13 +215,16 @@ STATUS API SystemPhysicalMemoryAllocatePages(OUT UINT64 *PhysicalAddress, IN CON
     PageIndexFrameMetadata->Order = AllocatedOrder;
     PageIndexFrameMetadata->ReferenceCount = 1;
 
-    PhysicalAddressResult = PageIndex * PAGE_SIZE;
+    PhysicalAddressResult = PageIndex * PHYSICAL_MEMORY_PAGE_SIZE;
     *PhysicalAddress = PhysicalAddressResult;
 
 Cleanup:
     if (E_OK != Status)
     {
-        *PhysicalAddress = 0;
+        if (NULL_PTR != *PhysicalAddress)
+        {
+            *PhysicalAddress = 0;
+        }
     }
     return Status;
 }
@@ -243,13 +246,13 @@ STATUS API SystemPhysicalMemoryFreePages(IN OUT UINT64 *PhysicalAddress)
         goto Cleanup;
     }
 
-    if (0 != ((*PhysicalAddress) % PAGE_SIZE))
+    if (0 != ((*PhysicalAddress) % PHYSICAL_MEMORY_PAGE_SIZE))
     {
         Status = E_NOT_OK;
         goto Cleanup;
     }
 
-    PageIndex = (*PhysicalAddress) / PAGE_SIZE;
+    PageIndex = (*PhysicalAddress) / PHYSICAL_MEMORY_PAGE_SIZE;
     if (PageIndex >= TotalNumberOfPages)
     {
         Status = E_NOT_OK;
@@ -262,7 +265,7 @@ STATUS API SystemPhysicalMemoryFreePages(IN OUT UINT64 *PhysicalAddress)
         goto Cleanup;
     }
 
-    if (0 != (*PhysicalAddress) % ((1ULL << PageFrameMetadata[PageIndex].Order) * PAGE_SIZE))
+    if (0 != (*PhysicalAddress) % ((1ULL << PageFrameMetadata[PageIndex].Order) * PHYSICAL_MEMORY_PAGE_SIZE))
     {
         Status = E_NOT_OK;
         goto Cleanup;
@@ -272,9 +275,9 @@ STATUS API SystemPhysicalMemoryFreePages(IN OUT UINT64 *PhysicalAddress)
     if (0 == PageFrameMetadata[PageIndex].ReferenceCount)
     {
         PageFrameMetadata[PageIndex].Flags &= (~PAGE_FRAME_METADATA_USED_FLAG);
-        MemorySet((VOID *)PhysicalToVirtual(PageIndex * PAGE_SIZE), 
-                    0U, 
-                    (1ULL << PageFrameMetadata[PageIndex].Order) * PAGE_SIZE);
+        MemorySet((VOID *)PhysicalToVirtual(PageIndex * PHYSICAL_MEMORY_PAGE_SIZE),
+                    0U,
+                    (1ULL << PageFrameMetadata[PageIndex].Order) * PHYSICAL_MEMORY_PAGE_SIZE);
         MergeFreeBlock(PageIndex);
     }
 
@@ -286,7 +289,7 @@ Cleanup:
 STATUS API SystemPhysicalMemoryIncreaseReferenceCount(UINT64 PhysicalAddress)
 {
     STATUS Status = E_OK;
-    UINT64 PageIndex = PhysicalAddress / PAGE_SIZE;
+    UINT64 PageIndex = PhysicalAddress / PHYSICAL_MEMORY_PAGE_SIZE;
 
     if (0 == PhysicalAddress)
     {
@@ -294,7 +297,7 @@ STATUS API SystemPhysicalMemoryIncreaseReferenceCount(UINT64 PhysicalAddress)
         goto Cleanup;
     }
 
-    if (0 != (PhysicalAddress % PAGE_SIZE))
+    if (0 != (PhysicalAddress % PHYSICAL_MEMORY_PAGE_SIZE))
     {
         Status = E_NOT_OK;
         goto Cleanup;
@@ -312,7 +315,7 @@ STATUS API SystemPhysicalMemoryIncreaseReferenceCount(UINT64 PhysicalAddress)
         goto Cleanup;
     }
 
-    if (0 != PhysicalAddress % ((1ULL << PageFrameMetadata[PageIndex].Order) * PAGE_SIZE))
+    if (0 != PhysicalAddress % ((1ULL << PageFrameMetadata[PageIndex].Order) * PHYSICAL_MEMORY_PAGE_SIZE))
     {
         Status = E_NOT_OK;
         goto Cleanup;
@@ -327,7 +330,7 @@ Cleanup:
 STATUS API SystemPhysicalMemoryDecreaseReferenceCount(UINT64 PhysicalAddress)
 {
     STATUS Status = E_OK;
-    UINT64 PageIndex = PhysicalAddress / PAGE_SIZE;
+    UINT64 PageIndex = PhysicalAddress / PHYSICAL_MEMORY_PAGE_SIZE;
 
     if (0 == PhysicalAddress)
     {
@@ -335,7 +338,7 @@ STATUS API SystemPhysicalMemoryDecreaseReferenceCount(UINT64 PhysicalAddress)
         goto Cleanup;
     }
 
-    if (0 != (PhysicalAddress % PAGE_SIZE))
+    if (0 != (PhysicalAddress % PHYSICAL_MEMORY_PAGE_SIZE))
     {
         Status = E_NOT_OK;
         goto Cleanup;
@@ -353,7 +356,7 @@ STATUS API SystemPhysicalMemoryDecreaseReferenceCount(UINT64 PhysicalAddress)
         goto Cleanup;
     }
 
-    if (0 != PhysicalAddress % ((1ULL << PageFrameMetadata[PageIndex].Order) * PAGE_SIZE))
+    if (0 != PhysicalAddress % ((1ULL << PageFrameMetadata[PageIndex].Order) * PHYSICAL_MEMORY_PAGE_SIZE))
     {
         Status = E_NOT_OK;
         goto Cleanup;
@@ -380,7 +383,7 @@ STATUS API SystemPhysicalMemoryAllocatePool(OUT VOID **Buffer, IN CONST UINT64 S
     STATUS Status = E_OK;
     UINT64 PhysicalAddress = 0;
 
-    Status = SystemPhysicalMemoryAllocatePages(&PhysicalAddress, (Size + PAGE_SIZE - 1) / PAGE_SIZE);
+    Status = SystemPhysicalMemoryAllocatePages(&PhysicalAddress, (Size + PHYSICAL_MEMORY_PAGE_SIZE - 1) / PHYSICAL_MEMORY_PAGE_SIZE);
     if (E_OK == Status)
     {
         *Buffer = (VOID *)PhysicalAddress;
@@ -503,7 +506,7 @@ static VOID API RemoveFreeBlock(UINT64 PageIndex, UINT8 Order)
 
 static BOOLEAN IsPageFree(UINT64 PageIndex)
 {
-    return (PageIndex < TotalNumberOfPages) && 
+    return (PageIndex < TotalNumberOfPages) &&
     (0 == ((PAGE_FRAME_METADATA_RESERVED_FLAG | PAGE_FRAME_METADATA_USED_FLAG) & PageFrameMetadata[PageIndex].Flags)) &&
     (0 == PageFrameMetadata[PageIndex].ReferenceCount);
 }
